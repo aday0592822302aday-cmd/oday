@@ -1,7 +1,8 @@
 import os
 import asyncio
+import urllib.request
+import json
 from telethon import TelegramClient, events
-from pytubefix import YouTube
 
 # بيانات البوت الخاصة بك
 API_ID = 4146377  
@@ -14,26 +15,64 @@ DOWNLOAD_DIR = "bot_downloads"
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
 
-def download_youtube_video(video_url):
-    # تفعيل ميزة use_oauth لتخطي حظر الـ 429 وسيرفرات الاستضافة
-    yt = YouTube(video_url, use_oauth=True, allow_oauth_cache=True)
-    stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
-    file_path = stream.download(output_path=DOWNLOAD_DIR)
-    return file_path, yt.title
+def download_via_api(video_url):
+    # استخدام API خارجي مستقر جداً لتوفير الروابط المباشرة وتخطي الحظر
+    api_endpoint = f"https://cobalt.tools"
+    
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    
+    # إعداد الطلب سحابياً لطلب الفيديو بأعلى جودة مدمجة
+    data = json.dumps({"url": video_url, "videoQuality": "720"}).encode("utf-8")
+    req = urllib.request.Request(api_endpoint, data=data, headers=headers, method="POST")
+    
+    with urllib.request.urlopen(req) as response:
+        res_data = json.loads(response.read().decode("utf-8"))
+        
+    if res_data.get("status") == "stream" or res_data.get("status") == "picker":
+        direct_download_url = res_data.get("url")
+        
+        # تحميل الملف بشكل مؤقت سريع جداً داخل السيرفر السحابي
+        file_path = os.path.join(DOWNLOAD_DIR, "video.mp4")
+        urllib.request.urlretrieve(direct_download_url, file_path)
+        return file_path, "Video"
+    else:
+        raise Exception("لم نتمكن من جلب رابط الفيديو من الخادم الخارجي.")
 
 @bot.on(events.NewMessage(pattern='/start'))
 async def start(event):
-    await event.respond("🚀 مرحباً بك! أرسل لي رابط فيديو من يوتيوب، وسأتخطى الحظر لأرسله لك مباشرة.")
+    await event.respond("🚀 مستعد للعمل بأعلى استقرار! أرسل لي رابط فيديو من يوتيوب أو فيسبوك، وسأرسله لك مباشرة دون حظر.")
 
 @bot.on(events.NewMessage)
 async def handle_message(event):
     url = event.text
-    if "youtube.com" in url or "youtu.be" in url:
-        status_msg = await event.respond("⏳ جاري سحب الفيديو سحابياً وتخطي قيود الحظر...")
+    if any(domain in url for domain in ["youtube.com", "youtu.be", "facebook.com", "fb.watch", "fb.gg"]):
+        status_msg = await event.respond("⚡ جاري جلب الفيديو عبر السيرفر الخارجي بأقصى سرعة...")
         try:
             loop = asyncio.get_event_loop()
-            file_path, title = await loop.run_in_executor(None, download_youtube_video, url)
+            file_path, title = await loop.run_in_executor(None, download_via_api, url)
             
+            await status_msg.edit("🚀 جاري رفع الفيديو الآن إلى تيليجرام...")
+            
+            await bot.send_file(
+                event.chat_id, 
+                file_path, 
+                caption="🎬 **تم التحميل بنجاح عبر السحاب**",
+                supports_streaming=True
+            )
+            
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                
+            await status_msg.delete()
+            
+        except Exception as e:
+            await status_msg.edit(f"❌ حدث خطأ أثناء المعالجة: {str(e)}")
+
+print("البوت السحابي المستقر يعمل الآن...")
+bot.run_until_disconnected()
             await status_msg.edit("🚀 جاري رفع الفيديو الآن إلى تيليجرام...")
             
             await bot.send_file(
